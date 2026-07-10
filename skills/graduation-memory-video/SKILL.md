@@ -1,199 +1,316 @@
 ---
 name: graduation-memory-video
-description: Create a cinematic graduation tribute video from a person's photo. Generates 6 graduation scene images (high school through doctoral, diploma, memorial book cover) with Chinese academic gown colors, then composes them into a 15-18 second video with piano accompaniment using variable-duration cinematic pacing. Use this when users request a graduation memory video, graduation tribute, graduation photo slideshow, 毕业纪念视频, or any request to create a video commemorating academic milestones from a portrait photo.
+description: "Cinematic graduation tribute video creator. Given one portrait photo, generates 6 graduation scene images (high school through doctoral + diploma + memorial book cover), then creates smooth first-last-frame transition videos using Kling, assembles into a 15-18s cinematic video with warm piano accompaniment. Use this when user asks for graduation memory video, graduation tribute, graduation photo video, or similar creative video from a single portrait."
+version: "1.1.0"
+author: theo-lovart
 license: Apache-2.0
-compatibility: Requires image generation capability and Python 3.9+ with moviepy for video assembly fallback. Video/music generation tools (Kling, Suno/Mureka) optional — moviepy and Python wave module provide functional fallbacks.
+
 metadata:
-  author: theo-lovart
-  version: "1.1"
-  category: creative-design
+  hermes:
+    tags:
+      - creative-design
+      - content-creation
+      - video
+      - graduation
+      - workflow
+      - cinematic
+      - ai-generation
+    related_skills: []
+    requires_tools:
+      - image_generate
+      - video_generate
+      - terminal
+    fallback_for_toolsets: []
+    fallback_for_tools: []
+    config:
+      - key: image_gen.provider
+        description: "Image generation provider (openai for gpt-image-2)"
+        default: "openai"
+      - key: video_gen.provider
+        description: "Video generation provider (fal for Kling v3)"
+        default: "fal"
+      - key: video_gen.fal.model
+        description: "FAL video model (kling-v3 for Kling first-last frame mode)"
+        default: "kling-v3"
+
+required_environment_variables:
+  - name: OPENAI_API_KEY
+    prompt: "OpenAI API key for gpt-image-2"
+    help: "Get from https://platform.openai.com/api-keys"
+    required_for: "Image generation (Step 1)"
+  - name: FAL_KEY
+    prompt: "FAL API key for Kling v3 video generation"
+    help: "Get from https://fal.ai/dashboard/keys"
+    required_for: "Video generation (Step 2)"
+  - name: SUNO_API_KEY
+    prompt: "Suno API key for piano music generation (optional — falls back to wave synthesis)"
+    help: "Get from https://suno.com/api — if unavailable, the skill uses Python wave module for placeholder piano music"
+    required_for: "Music accompaniment (Step 4)"
 ---
 
 # Graduation Memory Video Creator
 
-Create a heartfelt cinematic graduation tribute video from a single portrait photo — spanning from high school through doctoral degree, ending with a diploma and memorial book cover.
+Create a cinematic graduation tribute video from a single portrait photo. The complete workflow: 6 graduation scene images → Kling first-last-frame transition videos → 15-18s assembled video → warm piano accompaniment.
 
-**Core Design Philosophy**: This is NOT a mechanical slideshow with equal-duration clips. It follows cinematic narrative pacing — key scenes (doctoral graduation, memorial book ending) receive longer screen time while transitional scenes move faster, creating natural emotional breathing room. Reference analysis from Lovart成品 shows real videos use 4 main scene blocks (~5s→~6s→~6.6s) rather than uniform 6×3 seconds.
+**Core design philosophy**: The video uses **cinematic variable-duration pacing** — not uniform 3s/clip, but emotional rhythm where key moments (doctoral graduation, memorial book ending) get more screen time, and transitions are shorter, creating natural breathing space. Based on real Lovart成品 analysis.
 
-If video/music generation tools (Kling, Suno/Mureka) are not available in the current environment, fall back to moviepy crossfade montage (variable-duration clips) and Python wave module for placeholder audio. Always inform the user about the fallback and its limitations before proceeding.
+## When to Use
 
-## Workflow Overview
+Trigger this skill when the user:
+- Provides a portrait photo and asks for a graduation memory/tribute video
+- Wants to create a video spanning their academic journey (high school → bachelor's → master's → doctoral)
+- Asks for "毕业纪念视频", "毕业回忆视频", "graduation memory video", "graduation tribute"
+- Wants AI-generated graduation scenes assembled into a short video
 
-```
-Input photo → [Step 1] Generate 6 graduation scene images → [Step 2] Create transition videos → [Step 3] Assemble video → [Step 4] Add piano music → Final output
-```
+## Quick Reference
+
+| Step | Tool | Key Parameters |
+|------|------|----------------|
+| 1. Generate 6 images | `image_generate` | `aspect_ratio="portrait"`, `model="gpt-image-2"` (high quality) |
+| 2. Create 6 transition videos | `video_generate` | `model="kling-v3"`, `aspect_ratio="9:16"`, `image_url` + `reference_image_urls` for first-last frame |
+| 3. Assemble video | `terminal` | `ffmpeg` or moviepy crossfade montage |
+| 4. Add piano music | `terminal` | Suno API (preferred) or Python wave fallback via `${HERMES_SKILL_DIR}/scripts/generate_music.py` |
 
 ## Step 1: Generate 6 Graduation Scene Images
 
-Use the available image generation tool to create 6 images in 9:16 (vertical/portrait) aspect ratio. Each image must maintain person consistency based on the user's reference photo.
+Use `image_generate` (provider: openai, model: gpt-image-2) to create 6 9:16 vertical images. Each prompt must include extremely detailed person description for consistency across all 6 images.
 
-### ⚠️ Person Consistency Challenge
+**⚠️ Critical: Person Consistency**
 
-**This is the skill's greatest challenge.** If the environment supports image-to-image generation (reference image input), prioritize that mode for better consistency. If only text-to-image is available, describe the person's features in extreme detail in every prompt — and use the EXACT SAME description text across all 6 prompts (copy-paste, never abbreviate or rephrase). Consistency takes priority over brevity.
+Since `image_generate` is text-to-image only (no image-to-image mode in current Hermes plugin architecture), maintaining face consistency is the biggest challenge. Strategies:
+1. **Extract person features** from the provided photo first — describe hair, skin tone, facial features, build in extreme detail
+2. **Copy-paste the EXACT same person description** across all 6 prompts (consistency > brevity)
+3. **After generating all 6 images**, show them to the user for consistency review before proceeding to Step 2
 
-After generating all 6 images, show them to the user for approval before proceeding. If any image deviates too much from the person's appearance, regenerate that specific image.
+### Generation Order (strict)
 
-### 6 Images Summary
+Generate images in order 1→6, confirming each image's quality before proceeding:
 
-Load `references/prompt_templates.md` for complete prompt templates. Key points:
-
-1. **High School** — Chinese high school uniform (蓝白配色运动校服), school corridor with warm morning light, youthful smile
-2. **Bachelor's** — Chinese bachelor's gown (黑色学士服 with 粉色领饰), tree-lined campus path, library background
-3. **Master's** — Chinese master's gown (蓝色硕士服 with 藏蓝色领饰), ginkgo-lined autumn path, graduate school entrance
-4. **Doctoral** — Chinese doctoral gown (红色博士服 with 红色领饰), traditional Chinese building with "学术报告厅" plaque, peach blossoms
-5. **Diploma** — Doctoral diploma on sunlit wooden desk, portrait visible, university name obscured
-6. **Memorial Book Cover** — Closed book with "毕业纪念册" title, sunset-like warm lighting
+1. **High School**: Student in Chinese high school uniform, bright school corridor, warm morning light
+2. **Bachelor's**: Black gown with pink trim, tree-lined campus path, library background
+3. **Master's**: Blue gown with deep blue trim, golden ginkgo autumn path, graduate school entrance
+4. **Doctoral**: Red gown with red trim + black border, traditional Chinese ancient building with peach blossoms
+5. **Diploma**: Close-up doctoral diploma on sunlit wooden desk, golden light rays
+6. **Memorial Book Cover**: Closed book with "毕业纪念册" typography, warm sunset ambient light
 
 ### Color Tone Progression
 
-The 6 images follow an intentional emotional color progression:
+| Image | Color Tone | Emotional Purpose |
+|-------|-----------|-------------------|
+| 1 (High School) | Bright warm golden | Youthful innocence |
+| 2 (Bachelor's) | Warm spring amber | Growth & hope |
+| 3 (Master's) | Warm autumn amber (slightly deeper) | Maturation |
+| 4 (Doctoral) | Rich warm + slightly more saturated | Achievement peak |
+| 5 (Diploma) | Soft warm muted golden | Quiet reflection |
+| 6 (Memorial Book) | Warmest soft sunset amber | Fond closure |
 
-| Scene | Color Character | Emotional Mapping | Key Words |
-|-------|----------------|-------------------|-----------|
-| High School | Bright warm, white-gold | Youthful beginnings | bright warm, golden highlights |
-| Bachelor's | Rich golden, warm spring | Growing confidence | rich golden, warm spring |
-| Master's | Amber warm, deeper | Depth and maturity | amber, burnt sienna |
-| Doctoral | Slightly more saturated, red-gold | Peak achievement | richer saturation, red-gold |
-| Diploma | Soft muted yellow, receding | Quiet reflection | muted golden, softer |
-| Memorial Book | Warmest, softest sunset tones | Closure and fond memory | warmest, softest, sunset-like |
+### Chinese Academic Gown Standards
 
-### Key Parameters
+| Degree | Gown Color | Trim Color | Trim Border |
+|--------|-----------|-----------|-------------|
+| Bachelor's (学士) | Black | Pink | — |
+| Master's (硕士) | Blue | Deep Blue | — |
+| Doctoral (博士) | Red | Red | Black border on trim |
 
-- **Aspect ratio**: 9:16 (vertical) for all images
-- **Resolution**: 720×1280 (standard mobile vertical) or higher
-- **Style**: Warm cinematic film grain, shallow depth of field, golden hour lighting
-- **Cultural**: Chinese university degree gown styles (not Western)
-- **Person description**: MUST be identical text across all 6 prompts
+### Tool Call Format
 
-## Step 2: Create Transition Videos
+```
+image_generate(
+    prompt="<full prompt from references/prompt_templates.md>",
+    aspect_ratio="portrait",
+    model="gpt-image-2"
+)
+```
 
-Use Kling's **First-Last Frame mode** to create transition videos. This is the core generation method — Kling takes a start frame image and an end frame image as input, and AI-generates the smooth transition animation between them.
-
-### ⚠️ Strict Generation Order
-
-1. **Complete Step 1 first**: Generate all 6 graduation scene images in order (1→6), confirming each image's quality before proceeding to the next
-2. **Then generate videos**: Only start Step 2 after all 6 images are finished
-3. **Generate videos in order**: Videos 1→5 use first-last frame mode sequentially, Video 6 uses first-frame-only mode
-
-### First-Last Frame Mode Details
-
-Kling's first-last frame mode allows you to provide both a starting frame image and an ending frame image — Kling automatically generates the smooth transition animation between them. This ensures continuity: each video's end frame is the next video's start frame, forming a perfect chain.
-
-**Generation rules**:
-- **Videos 1-5**: Use first-last frame mode. Start frame = previous image, End frame = next image
-- **Video 6**: Use first-frame-only mode (no end frame needed). Start frame = Image 6, static hold + slow fade-out
-
-| Video # | Start Frame Image | End Frame Image | Transition Description | Suggested Duration | Emotional Role |
-|---------|-------------------|----------------|----------------------|--------------------|----------------|
-| 1 | Image 1 (High School) | Image 2 (Bachelor's) | School corridor → campus path | 2-2.5s | Youthful beginning |
-| 2 | Image 2 (Bachelor's) | Image 3 (Master's) | Library path → ginkgo path | 2-2.5s | Growth acceleration |
-| 3 | Image 3 (Master's) | Image 4 (Doctoral) | Graduate school → ancient building | 3-3.5s | Academic peak |
-| 4 | Image 4 (Doctoral) | Image 5 (Diploma) | Peach blossoms → sunlit desk | 2.5-3s | Celebration → reflection |
-| 5 | Image 5 (Diploma) | Image 6 (Memorial Book) | Diploma → memorial book | 2.5-3s | Reflection → closure |
-| 6 | Image 6 (Memorial Book) | **No end frame** | Memorial book static hold ending | 3-4s | Warm closure |
-
-**Video 6 special handling**: Only provide Image 6 as the start frame — no end frame. Kling will generate a slow static hold + fade-out ending (3-4 seconds), giving viewers time to absorb the emotional conclusion.
-
-### Transition Prompt Requirements
-
-Each video's prompt must include:
-1. **Explicit start and end frame content description** (e.g., "starting from school corridor scene, naturally transitioning to campus path scene")
-2. **Transition style**: Smooth, natural, aesthetically beautiful — **no stiff mechanical morphing, no abrupt cuts**. This is critical.
-3. **Emotional atmosphere description**: Each transition should echo its emotional role (e.g., Video 3 is "academic peak" — needs dignified pacing)
-4. **Color tone continuity**: Maintain warm color progression throughout the transition — no sudden color shifts
+For high-quality output, use the "high" quality tier of gpt-image-2 (if provider supports quality tiers).
 
 Complete prompt templates in `references/prompt_templates.md`.
 
-### Cinematic Pacing Strategy
+## Step 2: Create Transition Videos with Kling First-Last Frame Mode
 
-**Do NOT use equal-duration clips.** The video should have emotional rhythm with breathing room:
+Use `video_generate` (provider: fal, model: kling-v3) with Kling's **first-last frame mode** to create smooth transition videos.
 
-| Scene Segment | Content | Suggested Duration | Emotional Role |
-|---------------|---------|--------------------|----------------|
-| Opening | High school → Bachelor's | 4-5 seconds | Let viewers enter the emotion |
-| Middle 1 | Bachelor's → Master's | 2.5-3 seconds | Growth acceleration, compact |
-| Middle 2 | Master's → Doctoral | 4-5 seconds | Academic peak, more time here |
-| Closing | Doctoral → Diploma → Memorial book | 5-6 seconds | Reflective ending, unhurried |
+### ⚠️ Strict Generation Order
 
-Total: approximately 15-18 seconds.
+1. **Complete Step 1 first**: Generate all 6 images in order (1→6), confirming each before continuing
+2. **Then generate videos**: Only start Step 2 after all 6 images are done
+3. **Generate videos in order**: Videos 1→5 sequentially, Video 6 separately
 
-### If Kling is Not Available
+### First-Last Frame Mode Details
 
-If Kling is not available in the current environment, use moviepy crossfade montage as a fallback — still achieves smooth visual transitions, but no AI-generated continuous camera motion. See Step 3 for moviepy fallback parameters.
+Kling's first-last frame mode takes a **start frame** and an **end frame** as input, and AI-generates the smooth transition animation between them. In Hermes, this is achieved through `video_generate` parameters:
 
-## Step 3: Assemble Video
+- **`image_url`**: The primary reference image → use as the **start frame** (first frame of the transition)
+- **`reference_image_urls`**: Additional reference images → use for the **end frame** (last frame of the transition)
+- **`prompt`**: Text description of the transition, must emphasize smooth natural aesthetics
 
-Combine transition videos into a complete video:
+**⚠️ Provider-specific behavior**: The `reference_image_urls` parameter's exact behavior with Kling/FAL depends on the provider implementation. If `reference_image_urls` does not correctly pass the end frame to Kling's first-last frame mode, you may need to:
+1. Use `image_url` as the start frame and describe the end frame content in the prompt
+2. Or check if the FAL Kling API supports `end_frame_url` as a separate parameter through kwargs
 
-- **Total duration**: ~15-18 seconds (variable pacing per Step 2)
-- **Assembly order**: Video 1 → 6, seamless with crossfade transitions
-- **Remove original audio**: Strip all source audio tracks
-- **Ending**: Last 1-2 seconds slow fade to black or white, giving viewers a natural pause
+### Generation Rules
 
-### moviepy Montage Fallback
+- **Videos 1-5**: First-last frame mode. `image_url` = start frame image, `reference_image_urls` = [end frame image]
+- **Video 6**: First-frame-only mode. `image_url` = Image 6, no reference images needed
 
-If using moviepy image montage (instead of Kling video transitions), use these parameters:
+| Video # | `image_url` (Start Frame) | `reference_image_urls` (End Frame) | Transition Description | Suggested Duration | Emotional Role |
+|---------|---------------------------|------------------------------------|----------------------|--------------------|----------------|
+| 1 | Image 1 (High School) | [Image 2 (Bachelor's)] | School corridor → campus path | 2-2.5s | Youthful beginning |
+| 2 | Image 2 (Bachelor's) | [Image 3 (Master's)] | Library path → ginkgo path | 2-2.5s | Growth acceleration |
+| 3 | Image 3 (Master's) | [Image 4 (Doctoral)] | Graduate school → ancient building | 3-3.5s | Academic peak |
+| 4 | Image 4 (Doctoral) | [Image 5 (Diploma)] | Peach blossoms → sunlit desk | 2.5-3s | Celebration → reflection |
+| 5 | Image 5 (Diploma) | [Image 6 (Memorial Book)] | Diploma → memorial book | 2.5-3s | Reflection → closure |
+| 6 | Image 6 (Memorial Book) | **None** (no end frame) | Memorial book static hold | 3-4s | Warm closure |
 
-```python
-# Variable clip durations per image (cinematic pacing)
-clip_durations = [2.5, 2.5, 3.5, 3.0, 3.0, 3.5]  # high school through memorial book
-# Crossfade overlap duration
-transition_duration = 0.6  # 0.6 seconds overlap
-# Image dimensions (matching Lovart reference standard)
-size = (720, 1280)  # 9:16 vertical standard
-# Each image loaded as ImageClip with set duration
-# Use CompositeVideoClip + CrossFadeIn for fade transitions
-# Total ≈ sum(clip_durations) - 5*transition_duration ≈ 15 seconds
-# Plus 2-second ending fade-out ≈ 17 seconds
+### Video 6 Special Handling
+
+Video 6 only has a start frame (Image 6) — no end frame or reference images. Kling generates a slow static hold with gradual fade-out (3-4 seconds), giving viewers time to absorb the emotional conclusion.
+
+### Transition Prompt Requirements
+
+Every prompt must include these 4 elements:
+1. **Start and end frame content** (e.g., "starting from school corridor, naturally transitioning to campus path")
+2. **Transition style**: **smooth, natural, aesthetically beautiful — NO stiff mechanical morphing, NO abrupt cuts**
+3. **Emotional atmosphere** matching the transition's role
+4. **Color tone continuity** — maintain warm progression, no sudden color shifts
+
+### Tool Call Format
+
+**Videos 1-5 (first-last frame mode):**
+```
+video_generate(
+    prompt="<transition prompt from references/prompt_templates.md>",
+    image_url="<start_frame_image_url_or_path>",
+    reference_image_urls=["<end_frame_image_url_or_path>"],
+    model="kling-v3",
+    aspect_ratio="9:16",
+    duration=<suggested_duration>,
+    negative_prompt="stiff, mechanical, morphing, abrupt, harsh, jerky"
+)
 ```
 
-**Note**: moviepy v2.x does NOT have `moviepy.editor` module. Correct import: `from moviepy import VideoFileClip, ImageClip, CompositeVideoClip`
+**Video 6 (first-frame-only mode):**
+```
+video_generate(
+    prompt="<ending hold prompt>",
+    image_url="<image_6_url_or_path>",
+    model="kling-v3",
+    aspect_ratio="9:16",
+    duration=4
+)
+```
+
+### Cinematic Pacing Strategy
+
+**Do NOT use equal-duration clips.** Variable pacing based on emotional rhythm:
+
+| Segment | Content | Duration | Emotional Role |
+|---------|---------|----------|----------------|
+| Opening | High school → Bachelor's | 4-5s | Let viewers enter the emotion |
+| Middle 1 | Bachelor's → Master's | 2.5-3s | Growth acceleration, compact |
+| Middle 2 | Master's → Doctoral | 4-5s | Academic peak, more time here |
+| Closing | Doctoral → Diploma → Memorial book | 5-6s | Reflective ending, unhurried |
+
+Total: ~15-18 seconds.
+
+### If video_generate or Kling is Not Available
+
+Use moviepy crossfade montage as fallback via `terminal`:
+```bash
+python3 ${HERMES_SKILL_DIR}/scripts/assemble_video.py --images <img1>,<img2>,...,<img6> --durations 2.5,2.5,3.5,3,3,4 --crossfade 0.6 --output graduation_memory.mp4
+```
+
+## Step 3: Assemble Final Video
+
+After all 6 transition videos are generated, assemble them into the final 15-18s video.
+
+### Using ffmpeg (preferred)
+```bash
+ffmpeg -i video1.mp4 -i video2.mp4 ... -i video6.mp4 \
+  -filter_complex "[0:v][1:v]xfade=transition=fade:duration=0.6:offset=2.0[v01]; ..." \
+  -c:v libx264 -preset medium -crf 23 graduation_memory.mp4
+```
+
+### Using moviepy (fallback)
+If ffmpeg is not available, use the bundled script:
+```bash
+python3 ${HERMES_SKILL_DIR}/scripts/assemble_video.py \
+  --videos <v1>,<v2>,...,<v6> \
+  --crossfade 0.6 \
+  --fade_out 1.5 \
+  --output graduation_memory.mp4
+```
+
+### Parameters
+- **Crossfade overlap**: 0.6-0.8 seconds between clips
+- **Fade-out at end**: 1.5 seconds (last 1.5s of video fade to black/warm)
+- **Resolution**: 720×1280 (9:16 mobile vertical)
+- **FPS**: 30
 
 ## Step 4: Add Piano Accompaniment
 
-Use Suno or Mureka to generate warm piano solo music. If not available, use Python + wave/pydub module to create a simple piano-style WAV placeholder, or ask the user to provide their own music file. Inform the user about the fallback before proceeding.
+### Option A: Suno API (preferred)
 
-- **Style**: Warm, healing, nostalgic, piano solo
-- **Duration**: Match video length exactly (15-18 seconds)
-- **Requirements**: Pure music, no vocals, gentle rhythm
-- **Prompt keywords**: "warm piano solo, gentle, nostalgic, graduation memory, emotional, soft melody, no vocals, 18 seconds"
-- **Volume**: Background volume soft (30-40% of total), never overpowering
-- **Ending**: 2-second fade-out synchronized with video fade-out
+If `SUNO_API_KEY` is available, generate warm piano solo music via Suno:
+```bash
+python3 ${HERMES_SKILL_DIR}/scripts/generate_music.py --method suno \
+  --style "warm sentimental piano solo, graduation tribute, gentle melody" \
+  --duration 18 \
+  --output piano_accompaniment.mp3
+```
 
-Combine audio and video into the final output.
+Then combine video + audio:
+```bash
+ffmpeg -i graduation_memory.mp4 -i piano_accompaniment.mp3 \
+  -c:v copy -c:a aac -shortest graduation_memory_final.mp4
+```
 
-## Adaptation Variants
+### Option B: Python Wave Fallback
 
-The core structure can adapt to different variants while keeping the workflow unchanged:
+If no Suno API key or ffmpeg audio encoding, generate simple piano melody using Python wave module:
+```bash
+python3 ${HERMES_SKILL_DIR}/scripts/generate_music.py --method wave \
+  --duration 18 \
+  --output piano_accompaniment.wav
+```
 
-- **Stage count**: User may request only some stages (e.g., bachelor's + master's only)
-- **Degree type**: Can swap Chinese/Western degree gown styles
-- **Scene customization**: User may specify specific campus scenes
-- **Duration**: Adjust individual clip durations (2-5 seconds), total varies accordingly
-- **Music style**: Swap piano for strings, guitar, etc.
-- **Pacing preference**: User may prefer uniform pacing — use equal 3s/clip in that case
+Then combine with moviepy:
+```bash
+python3 ${HERMES_SKILL_DIR}/scripts/combine_video_audio.py \
+  --video graduation_memory.mp4 \
+  --audio piano_accompaniment.wav \
+  --output graduation_memory_final.mp4
+```
 
-## Chinese Degree Gown Color Reference
+### Music Guidelines
+- **Style**: Warm sentimental piano solo
+- **Volume**: 30-40% of total audio mix (music should support, not overpower)
+- **Ending**: Fade out synchronized with video fade-out (last 1.5-2s)
+- **Duration**: Match video length exactly (15-18s)
 
-| Degree Level | Gown Color | Trim Color | Visual Meaning |
-|-------------|-----------|-----------|---------------|
-| Bachelor's | Black | Pink trim (文科) | Foundation, warm start |
-| Master's | Blue | Dark blue trim | Depth and rigor |
-| Doctoral | Red | Red trim + black border | Peak achievement, honor |
+## Important Notes
 
-If user specifies a specific discipline, adjust trim colors accordingly. Default uses pink trim ( humanities/arts).
+1. **Person consistency is the #1 challenge** — text-to-image tools produce different faces each time. Always copy-paste identical person descriptions across all 6 prompts.
+2. **Generation order matters** — complete all 6 images before starting any video generation.
+3. **Kling first-last frame mode** — the `reference_image_urls` parameter maps to Kling's end frame. If this doesn't work correctly with the FAL Kling provider, describe the end frame content in the prompt text and use `image_url` alone.
+4. **Variable pacing** — never use uniform durations. Follow the cinematic pacing strategy table.
+5. **Transition quality** — every prompt must explicitly demand smooth natural transitions: "NO stiff mechanical morphing, NO abrupt cuts".
+6. **Fallbacks** — if any tool (image_generate, video_generate) is unavailable, inform the user and suggest alternatives. The skill is designed with multiple fallback paths.
 
-## Lovart Reference Analysis
+## Verification
 
-Based on analysis of a real Lovart成品 video (Theo's production):
+After completing all steps, verify:
+1. **6 images generated** — check each exists and person appearance is reasonably consistent
+2. **6 videos generated** — check transitions are smooth and not jarring
+3. **Final video assembled** — duration is 15-18s, resolution is 720×1280, transitions flow naturally
+4. **Music added** — piano solo is audible at 30-40% volume, fades out at end
+5. **Show result** — present the final video to the user for review, using `[[as_document]]` for high-quality delivery
 
-- **成品 parameters**: 720×1280 @ 30fps, 18.1s, audio 44100Hz
-- **Scene rhythm**: 4 main scene blocks (~5s→~6s→~6.6s), not uniform 6×3 seconds
-- **Key finding**: Real成品 videos use natural breathing rhythm — longer opening (emotional entry), faster middle transitions, unhurried closing
-- **Visual style**: Warm cinematic tones, crossfade transitions (never hard cuts)
+## Lovart成品 Reference
 
-This analysis informed Step 2's pacing strategy and Step 3's assembly parameters.
-
-## Resources
-
-- `references/prompt_templates.md` — Complete prompt templates for all 6 images and 6 transition videos, including person description extraction guide and color tone progression table
+Real production video analysis (Theo's Lovart成品):
+- Duration: 18.1s, Resolution: 720×1280, FPS: 30
+- 4 main scene segments (~5s → ~6s → ~6.6s), NOT uniform 6×3s
+- Scene transitions at t≈2.0s, t≈5.0-5.5s, t≈11.0-11.5s
+- Audio: piano accompaniment at 44100Hz
+- Key insight: variable-duration cinematic pacing produces superior emotional impact vs. uniform timing
