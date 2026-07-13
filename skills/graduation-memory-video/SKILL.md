@@ -1,316 +1,274 @@
 ---
 name: graduation-memory-video
-description: "Cinematic graduation tribute video creator. Given one portrait photo, generates 6 graduation scene images (high school through doctoral + diploma + memorial book cover), then creates smooth first-last-frame transition videos using Kling, assembles into a 15-18s cinematic video with warm piano accompaniment. Use this when user asks for graduation memory video, graduation tribute, graduation photo video, or similar creative video from a single portrait."
-version: "1.1.0"
-author: theo-lovart
-license: Apache-2.0
-
-metadata:
-  hermes:
-    tags:
-      - creative-design
-      - content-creation
-      - video
-      - graduation
-      - workflow
-      - cinematic
-      - ai-generation
-    related_skills: []
-    requires_tools:
-      - image_generate
-      - video_generate
-      - terminal
-    fallback_for_toolsets: []
-    fallback_for_tools: []
-    config:
-      - key: image_gen.provider
-        description: "Image generation provider (openai for gpt-image-2)"
-        default: "openai"
-      - key: video_gen.provider
-        description: "Video generation provider (fal for Kling v3)"
-        default: "fal"
-      - key: video_gen.fal.model
-        description: "FAL video model (kling-v3 for Kling first-last frame mode)"
-        default: "kling-v3"
-
-required_environment_variables:
-  - name: OPENAI_API_KEY
-    prompt: "OpenAI API key for gpt-image-2"
-    help: "Get from https://platform.openai.com/api-keys"
-    required_for: "Image generation (Step 1)"
-  - name: FAL_KEY
-    prompt: "FAL API key for Kling v3 video generation"
-    help: "Get from https://fal.ai/dashboard/keys"
-    required_for: "Video generation (Step 2)"
-  - name: SUNO_API_KEY
-    prompt: "Suno API key for piano music generation (optional — falls back to wave synthesis)"
-    help: "Get from https://suno.com/api — if unavailable, the skill uses Python wave module for placeholder piano music"
-    required_for: "Music accompaniment (Step 4)"
+description: "毕业纪念视频创作技能。当用户提供一张人物照片，要求生成毕业纪念视频、校草递毕业证等创意短视频时触发此技能。支持多种脚本工作流：1) 毕业纪念视频（高中到博士6分镜，默认选项）；2) 校草给你递毕业证（4分镜浪漫互动）；用户也可自定义分镜内容。核心生成方式为 Kling 首尾帧模式转场短视频 → 拼接15-18s视频 → 钢琴配乐。触发词：毕业纪念视频、校草递毕业证、毕业照视频、毕业回忆视频、graduation memory video、graduation tribute。"
+agent_created: true
 ---
 
-# Graduation Memory Video Creator
+# Graduation Memory Video 创作技能
 
-Create a cinematic graduation tribute video from a single portrait photo. The complete workflow: 6 graduation scene images → Kling first-last-frame transition videos → 15-18s assembled video → warm piano accompaniment.
+## Overview
 
-**Core design philosophy**: The video uses **cinematic variable-duration pacing** — not uniform 3s/clip, but emotional rhythm where key moments (doctoral graduation, memorial book ending) get more screen time, and transitions are shorter, creating natural breathing space. Based on real Lovart成品 analysis.
+基于一张人物照片，创作完整的毕业纪念/创意短视频。支持多种脚本工作流——用户可选择预设脚本或自定义分镜内容。核心流程：关键帧图片生成 → Kling 首尾帧转场短视频 → 拼接成15-18秒视频 → 配钢琴纯音乐。
 
-## When to Use
+**核心设计理念**：
+- 视频不是机械等时长拼接，而是有情感节奏的电影式叙事
+- Kling 首尾帧模式确保转场连贯性——每个视频的尾帧是下一个视频的首帧
+- 每个 prompt 必须要求转场自然唯美不生硬（NO stiff mechanical morphing, NO abrupt cuts）
 
-Trigger this skill when the user:
-- Provides a portrait photo and asks for a graduation memory/tribute video
-- Wants to create a video spanning their academic journey (high school → bachelor's → master's → doctoral)
-- Asks for "毕业纪念视频", "毕业回忆视频", "graduation memory video", "graduation tribute"
-- Wants AI-generated graduation scenes assembled into a short video
+若运行环境缺少 Kling / Mureka / Suno 等外部工具，可改用 moviepy 做图片转场 montage 并生成/替换背景音乐。运行前检查环境工具可用性并向用户说明。
 
-## Quick Reference
-
-| Step | Tool | Key Parameters |
-|------|------|----------------|
-| 1. Generate 6 images | `image_generate` | `aspect_ratio="portrait"`, `model="gpt-image-2"` (high quality) |
-| 2. Create 6 transition videos | `video_generate` | `model="kling-v3"`, `aspect_ratio="9:16"`, `image_url` + `reference_image_urls` for first-last frame |
-| 3. Assemble video | `terminal` | `ffmpeg` or moviepy crossfade montage |
-| 4. Add piano music | `terminal` | Suno API (preferred) or Python wave fallback via `${HERMES_SKILL_DIR}/scripts/generate_music.py` |
-
-## Step 1: Generate 6 Graduation Scene Images
-
-Use `image_generate` (provider: openai, model: gpt-image-2) to create 6 9:16 vertical images. Each prompt must include extremely detailed person description for consistency across all 6 images.
-
-**⚠️ Critical: Person Consistency**
-
-Since `image_generate` is text-to-image only (no image-to-image mode in current Hermes plugin architecture), maintaining face consistency is the biggest challenge. Strategies:
-1. **Extract person features** from the provided photo first — describe hair, skin tone, facial features, build in extreme detail
-2. **Copy-paste the EXACT same person description** across all 6 prompts (consistency > brevity)
-3. **After generating all 6 images**, show them to the user for consistency review before proceeding to Step 2
-
-### Generation Order (strict)
-
-Generate images in order 1→6, confirming each image's quality before proceeding:
-
-1. **High School**: Student in Chinese high school uniform, bright school corridor, warm morning light
-2. **Bachelor's**: Black gown with pink trim, tree-lined campus path, library background
-3. **Master's**: Blue gown with deep blue trim, golden ginkgo autumn path, graduate school entrance
-4. **Doctoral**: Red gown with red trim + black border, traditional Chinese ancient building with peach blossoms
-5. **Diploma**: Close-up doctoral diploma on sunlit wooden desk, golden light rays
-6. **Memorial Book Cover**: Closed book with "毕业纪念册" typography, warm sunset ambient light
-
-### Color Tone Progression
-
-| Image | Color Tone | Emotional Purpose |
-|-------|-----------|-------------------|
-| 1 (High School) | Bright warm golden | Youthful innocence |
-| 2 (Bachelor's) | Warm spring amber | Growth & hope |
-| 3 (Master's) | Warm autumn amber (slightly deeper) | Maturation |
-| 4 (Doctoral) | Rich warm + slightly more saturated | Achievement peak |
-| 5 (Diploma) | Soft warm muted golden | Quiet reflection |
-| 6 (Memorial Book) | Warmest soft sunset amber | Fond closure |
-
-### Chinese Academic Gown Standards
-
-| Degree | Gown Color | Trim Color | Trim Border |
-|--------|-----------|-----------|-------------|
-| Bachelor's (学士) | Black | Pink | — |
-| Master's (硕士) | Blue | Deep Blue | — |
-| Doctoral (博士) | Red | Red | Black border on trim |
-
-### Tool Call Format
+## 工作流总览
 
 ```
-image_generate(
-    prompt="<full prompt from references/prompt_templates.md>",
-    aspect_ratio="portrait",
-    model="gpt-image-2"
-)
+输入照片 → [步骤0] 选择脚本 → [步骤1] 生成关键帧图片 → [步骤2] 生成转场短视频 → [步骤3] 拼接视频 → [步骤4] 配乐输出
 ```
 
-For high-quality output, use the "high" quality tier of gpt-image-2 (if provider supports quality tiers).
+---
 
-Complete prompt templates in `references/prompt_templates.md`.
+## 步骤0：脚本策划（选择工作流）
 
-## Step 2: Create Transition Videos with Kling First-Last Frame Mode
+在生成任何内容之前，先与用户确认脚本选择。此步骤决定后续步骤1-2的分镜数量、内容、转场关系和节奏策略。
 
-Use `video_generate` (provider: fal, model: kling-v3) with Kling's **first-last frame mode** to create smooth transition videos.
+### 预设脚本
 
-### ⚠️ Strict Generation Order
+| 脚本编号 | 名称 | 分镜数 | 总时长 | 情感定位 | 适用场景 |
+|---------|------|--------|--------|---------|---------|
+| **脚本A** | 毕业纪念视频 | 6 | 15-18s | 温馨回顾，学术历程 | 默认选项，用户无特殊要求时使用 |
+| **脚本B** | 校草给你递毕业证 | 4 | 12-15s | 惊喜浪漫，甜蜜互动 | 用户想做趣味/浪漫类毕业创意视频 |
 
-1. **Complete Step 1 first**: Generate all 6 images in order (1→6), confirming each before continuing
-2. **Then generate videos**: Only start Step 2 after all 6 images are done
-3. **Generate videos in order**: Videos 1→5 sequentially, Video 6 separately
+### 脚本选择流程
 
-### First-Last Frame Mode Details
+1. **用户提供了明确意图**：根据用户描述匹配对应脚本（如"做个校草递毕业证"→脚本B）
+2. **用户无特殊要求**：默认选择脚本A（毕业纪念视频）
+3. **用户想自定义**：进入自定义模式——用户指定分镜数量和每帧内容，agent 帮其完善 prompt 和转场设计
 
-Kling's first-last frame mode takes a **start frame** and an **end frame** as input, and AI-generates the smooth transition animation between them. In Hermes, this is achieved through `video_generate` parameters:
+### 自定义分镜
 
-- **`image_url`**: The primary reference image → use as the **start frame** (first frame of the transition)
-- **`reference_image_urls`**: Additional reference images → use for the **end frame** (last frame of the transition)
-- **`prompt`**: Text description of the transition, must emphasize smooth natural aesthetics
+用户可以修改任何预设脚本的分镜内容，或完全自定义。流程：
+1. 用户描述想要的场景（如"不要博士分镜，加一个操场场景"）
+2. agent 根据用户意图重新编排分镜表，列出每帧内容概要
+3. 用户确认分镜表后，agent 生成完整 prompt 模板
+4. 按确认后的脚本执行步骤1-4
 
-**⚠️ Provider-specific behavior**: The `reference_image_urls` parameter's exact behavior with Kling/FAL depends on the provider implementation. If `reference_image_urls` does not correctly pass the end frame to Kling's first-last frame mode, you may need to:
-1. Use `image_url` as the start frame and describe the end frame content in the prompt
-2. Or check if the FAL Kling API supports `end_frame_url` as a separate parameter through kwargs
+---
 
-### Generation Rules
+## 脚本A：毕业纪念视频（默认，6分镜）
 
-- **Videos 1-5**: First-last frame mode. `image_url` = start frame image, `reference_image_urls` = [end frame image]
-- **Video 6**: First-frame-only mode. `image_url` = Image 6, no reference images needed
+### 分镜概要
 
-| Video # | `image_url` (Start Frame) | `reference_image_urls` (End Frame) | Transition Description | Suggested Duration | Emotional Role |
-|---------|---------------------------|------------------------------------|----------------------|--------------------|----------------|
-| 1 | Image 1 (High School) | [Image 2 (Bachelor's)] | School corridor → campus path | 2-2.5s | Youthful beginning |
-| 2 | Image 2 (Bachelor's) | [Image 3 (Master's)] | Library path → ginkgo path | 2-2.5s | Growth acceleration |
-| 3 | Image 3 (Master's) | [Image 4 (Doctoral)] | Graduate school → ancient building | 3-3.5s | Academic peak |
-| 4 | Image 4 (Doctoral) | [Image 5 (Diploma)] | Peach blossoms → sunlit desk | 2.5-3s | Celebration → reflection |
-| 5 | Image 5 (Diploma) | [Image 6 (Memorial Book)] | Diploma → memorial book | 2.5-3s | Reflection → closure |
-| 6 | Image 6 (Memorial Book) | **None** (no end frame) | Memorial book static hold | 3-4s | Warm closure |
+| 帧编号 | 场景 | 色调 | 情感 |
+|-------|------|------|------|
+| 1 | 高中毕业照 | 明亮温暖偏白金 | 青春开始 |
+| 2 | 本科毕业照 | 温暖金调丰富 | 成长自信 |
+| 3 | 硕士毕业照 | 琥珀暖色偏深 | 深入沉稳 |
+| 4 | 博士毕业照 | 略增饱和红金 | 巅峰荣耀 |
+| 5 | 毕业证书 | 柔和昏黄收束 | 回顾感慨 |
+| 6 | 纪念册封面 | 最温暖最柔和 | 收束回忆 |
 
-### Video 6 Special Handling
+### 转场视频对应表
 
-Video 6 only has a start frame (Image 6) — no end frame or reference images. Kling generates a slow static hold with gradual fade-out (3-4 seconds), giving viewers time to absorb the emotional conclusion.
+| 视频编号 | 首帧 | 尾帧 | 建议时长 | 情感定位 |
+|---------|------|------|---------|---------|
+| 视频1 | 图片1（高中） | 图片2（本科） | 2-2.5s | 青春回忆起步 |
+| 视频2 | 图片2（本科） | 图片3（硕士） | 2-2.5s | 成长加速过渡 |
+| 视频3 | 图片3（硕士） | 图片4（博士） | 3-3.5s | 学术巅峰重点 |
+| 视频4 | 图片4（博士） | 图片5（证书） | 2.5-3s | 庄重到感慨 |
+| 视频5 | 图片5（证书） | 图片6（纪念册） | 2.5-3s | 回顾到收束 |
+| 视频6 | 图片6（纪念册） | **无尾帧** | 3-4s | 温情收束定格 |
 
-### Transition Prompt Requirements
+### 节奏策略
 
-Every prompt must include these 4 elements:
-1. **Start and end frame content** (e.g., "starting from school corridor, naturally transitioning to campus path")
-2. **Transition style**: **smooth, natural, aesthetically beautiful — NO stiff mechanical morphing, NO abrupt cuts**
-3. **Emotional atmosphere** matching the transition's role
-4. **Color tone continuity** — maintain warm progression, no sudden color shifts
+| 场景段落 | 内容 | 建议时长 | 情感定位 |
+|---------|------|---------|---------|
+| 开场段 | 高中→本科 | 4-5秒 | 青春回忆，稍缓 |
+| 中段1 | 本科→硕士 | 2.5-3秒 | 成长加速，紧凑 |
+| 中段2 | 硕士→博士 | 4-5秒 | 学术巅峰，多停留 |
+| 收尾段 | 博士→证书→纪念册 | 5-6秒 | 感慨收束，从容 |
 
-### Tool Call Format
+完整的 prompt 模板见 `references/prompt_templates.md` → **脚本A：毕业纪念视频** 部分。
 
-**Videos 1-5 (first-last frame mode):**
+---
+
+## 脚本B：校草给你递毕业证（4分镜）
+
+### 分镜概要
+
+**故事线**：桃花盛开的校道上，一位穿学士服的英俊男生背对镜头。他转过头来，露出又惊又喜的青涩面庞。然后他向镜头（POV/你的视角）递过一张双人合照——照片里是他和你（用户），穿着学士服在学院门口合影，笑容阳光俊朗。镜头最后聚焦在这张合照上，定格两个人的灿烂笑容。
+
+| 帧编号 | 场景 | 色调 | 情感 |
+|-------|------|------|------|
+| 1 | 桃花校道·背影 | 柔美粉金暖调 | 悬念：他是谁？ |
+| 2 | 转脸·惊喜面庞 | 明亮暖光 | 惊喜心动：他回过头了！ |
+| 3 | 递合照·阳光笑容 | 温暖金调+照片亮色 | 甜蜜互动：这是我们的合照 |
+| 4 | 聚焦合照·双人笑容 | 柔和温暖定格 | 温馨收束：我们毕业了 |
+
+### 人物说明
+
+- **主角（校草）**：穿学士服的年轻英俊亚裔男子——需要极其详细的人物描述，与脚本A类似的一致性策略
+- **用户（POV）**：在帧3和帧4中出现——合照中的另一个人是用户，面容来自用户提供的照片。在纯文本生图模式下，用户的面容描述也需要极其详细地写进帧3和帧4的 prompt 中
+
+**⚠️ 双人物一致性挑战**：此脚本涉及两个不同人物出现在同一画面（帧3-4），比脚本A更难保持一致性。策略：
+1. 校草的人物描述在帧1-4中完全相同复制粘贴
+2. 用户的人物描述在帧3-4中完全相同复制粘贴
+3. 如果环境支持图生图（GPT image2），优先使用——效果远好于纯文本生图
+
+### 转场视频对应表
+
+| 视频编号 | 馰帧 | 尾帧 | 建议时长 | 情感定位 |
+|---------|------|------|---------|---------|
+| 视频1 | 图片1（背影） | 图片2（转脸） | 3-3.5s | 悬念揭晓，节奏舒缓 |
+| 视频2 | 图片2（惊喜面庞） | 图片3（递合照） | 3-3.5s | 心动互动，从容推进 |
+| 视频3 | 图片3（递合照） | 图片4（聚焦合照） | 2.5-3s | 温馨聚焦收束 |
+| 视频4 | 图片4（合照定格） | **无尾帧** | 3-4s | 温馨定格结尾 |
+
+### 节奏策略
+
+4分镜的总时长约12-15秒（比6分镜稍短，但每帧停留时间更长）：
+
+| 场景段落 | 内容 | 建议时长 | 情感定位 |
+|---------|------|---------|---------|
+| 开场+揭晓 | 背影→转脸 | 6-7秒 | 悬念感和惊喜感需要足够停留 |
+| 互动+收束 | 递合照→聚焦合照 | 5-6秒 | 甜蜜互动从容展开 |
+| 定格结尾 | 合照定格 | 3-4秒 | 温馨收束留回味 |
+
+完整的 prompt 模板见 `references/prompt_templates.md` → **脚本B：校草给你递毕业证** 部分。
+
+---
+
+## 步骤1：生成关键帧图片
+
+根据步骤0选定的脚本，按编号顺序生成全部关键帧图片。使用 GPT image2 或当前环境可用的文本生图工具（如 ImageGen），生成 9:16 竖版图片。
+
+**⚠️ 人物一致性是此技能的最大挑战**：当前 ImageGen 是纯文本生图（不支持图生图），每次生成的人物外貌会有差异。若环境支持 GPT image2 的图生图功能，优先使用它以获得更好的一致性。
+
+### 通用参数
+
+- **比例**: 全部 9:16（竖版）
+- **分辨率**: 推荐输出 720×1280（标准手机竖屏格式）
+- **风格**: 温馨、唯美、纪实感，电影胶片质感
+- **文化适配**: 中国学位服样式
+
+### 生成顺序
+
+按编号顺序生成。生成每张图片后，确认质量再继续下一张。若人物面部偏离过多，重新生成该张。
+
+---
+
+## 步骤2：生成转场短视频
+
+使用 Kling 的**首尾帧模式**（First-Last Frame mode）生成转场短视频。这是此技能的核心生成方式——Kling 会根据提供的第一帧和最后一帧图片，AI 自动生成两者之间的丝滑过渡视频。
+
+### ⚠️ 必须严格遵守的生成顺序
+
+1. **先完成步骤1**：按编号顺序生成全部关键帧图片，确认每张质量后才继续下一张
+2. **再生成视频**：只有全部图片完成后，才能开始步骤2的视频生成
+3. **视频按顺序生成**：视频1→(N-1)按首尾帧模式依次生成，视频N单独生成首帧定格
+
+### 首尾帧模式详解
+
+Kling 的首尾帧模式允许你同时提供一张起始画面和一张结束画面，Kling 会自动补全中间的过渡动画。
+
+**生成规则**（适用于所有脚本）：
+- **视频1到视频(N-1)**：使用首尾帧模式，首帧=前一张图片，尾帧=后一张图片
+- **视频N（最后一个）**：仅使用首帧模式（无需尾帧），首帧=最后一张图片，做定格结尾 + 缓慢淡出
+
+### 转场 Prompt 要求
+
+每个视频的 prompt 必须包含以下4要素：
+1. **明确说明首帧和尾帧的内容**
+2. **转场方式要求**：自然、唯美、丝滑，避免生硬跳切或机械变形（NO stiff mechanical morphing, NO abrupt cuts）
+3. **情感氛围描述**：呼应该转场的情感定位
+4. **色调连贯性**：整个转场过程中色调保持递进，不要突变
+
+### 如果没有 Kling
+
+可用 moviepy 将图片做成交叠淡入淡出（crossfade）montage 作为替代。moviepy 回退方案见步骤3。
+
+---
+
+## 步骤3：拼接视频
+
+将转场短视频拼接成一个完整视频：
+
+- **拼接方式**: 按编号顺序无缝衔接，使用 crossfade 过渡
+- **去除原声**: 拼接后去掉所有原始音频轨道
+- **结尾处理**: 最后1-2秒缓慢淡出到黑色，给观众缓冲感
+- **总时长**: 脚本A约15-18秒，脚本B约12-15秒
+
+### moviepy montage 回退方案
+
+若使用 moviepy 做图片 montage（而非 Kling 视频），参数配置：
+
+**脚本A**：
+```python
+clip_durations = [2.5, 2.5, 3.5, 3.0, 3.0, 3.5]  # 6帧不等时长
+size = (720, 1280)
+transition_duration = 0.6
 ```
-video_generate(
-    prompt="<transition prompt from references/prompt_templates.md>",
-    image_url="<start_frame_image_url_or_path>",
-    reference_image_urls=["<end_frame_image_url_or_path>"],
-    model="kling-v3",
-    aspect_ratio="9:16",
-    duration=<suggested_duration>,
-    negative_prompt="stiff, mechanical, morphing, abrupt, harsh, jerky"
-)
+
+**脚本B**：
+```python
+clip_durations = [3.5, 3.5, 3.0, 3.5]  # 4帧不等时长
+size = (720, 1280)
+transition_duration = 0.6
 ```
 
-**Video 6 (first-frame-only mode):**
-```
-video_generate(
-    prompt="<ending hold prompt>",
-    image_url="<image_6_url_or_path>",
-    model="kling-v3",
-    aspect_ratio="9:16",
-    duration=4
-)
-```
+---
 
-### Cinematic Pacing Strategy
+## 步骤4：配乐输出
 
-**Do NOT use equal-duration clips.** Variable pacing based on emotional rhythm:
+使用 Mureka 或 Suno 生成一段钢琴纯音乐作为背景配乐。
 
-| Segment | Content | Duration | Emotional Role |
-|---------|---------|----------|----------------|
-| Opening | High school → Bachelor's | 4-5s | Let viewers enter the emotion |
-| Middle 1 | Bachelor's → Master's | 2.5-3s | Growth acceleration, compact |
-| Middle 2 | Master's → Doctoral | 4-5s | Academic peak, more time here |
-| Closing | Doctoral → Diploma → Memorial book | 5-6s | Reflective ending, unhurried |
+- **风格**: 温馨、治愈、回忆感、钢琴独奏
+- **时长**: 与视频长度完全匹配
+- **音量**: 不超过30-40%，避免喧宾夺主
+- **结尾**: 音乐末尾2秒渐弱淡出，与视频结尾淡出同步
 
-Total: ~15-18 seconds.
+脚本A配乐关键词：`warm piano solo, gentle, nostalgic, graduation memory, emotional, soft melody, no vocals, 18 seconds`
 
-### If video_generate or Kling is Not Available
+脚本B配乐关键词：`warm piano solo, sweet, romantic surprise, youthful heartbeat, gentle melody, no vocals, 15 seconds`
 
-Use moviepy crossfade montage as fallback via `terminal`:
-```bash
-python3 ${HERMES_SKILL_DIR}/scripts/assemble_video.py --images <img1>,<img2>,...,<img6> --durations 2.5,2.5,3.5,3,3,4 --crossfade 0.6 --output graduation_memory.mp4
-```
+---
 
-## Step 3: Assemble Final Video
+## 自适应变体
 
-After all 6 transition videos are generated, assemble them into the final 15-18s video.
+此技能的核心结构可适配不同变体，根据用户需求调整：
 
-### Using ffmpeg (preferred)
-```bash
-ffmpeg -i video1.mp4 -i video2.mp4 ... -i video6.mp4 \
-  -filter_complex "[0:v][1:v]xfade=transition=fade:duration=0.6:offset=2.0[v01]; ..." \
-  -c:v libx264 -preset medium -crf 23 graduation_memory.mp4
-```
+- **脚本选择**: 脚本A/B或自定义脚本
+- **分镜定制**: 用户可修改任何帧的内容、增减帧数
+- **学位类型**: 可替换为不同学位服样式
+- **配乐风格**: 可替换为其他风格（弦乐、吉他等）
+- **节奏偏好**: 用户可偏好均匀节奏而非电影式叙事
 
-### Using moviepy (fallback)
-If ffmpeg is not available, use the bundled script:
-```bash
-python3 ${HERMES_SKILL_DIR}/scripts/assemble_video.py \
-  --videos <v1>,<v2>,...,<v6> \
-  --crossfade 0.6 \
-  --fade_out 1.5 \
-  --output graduation_memory.mp4
-```
+---
 
-### Parameters
-- **Crossfade overlap**: 0.6-0.8 seconds between clips
-- **Fade-out at end**: 1.5 seconds (last 1.5s of video fade to black/warm)
-- **Resolution**: 720×1280 (9:16 mobile vertical)
-- **FPS**: 30
+## 工具依赖与回退方案
 
-## Step 4: Add Piano Accompaniment
+- **图片生成**: GPT image2（首选，支持图生图一致性） / ImageGen（回退，纯文本生图一致性较差）
+- **视频转场**: Kling 首尾帧模式（首选）或 moviepy crossfade montage（回退）
+- **音乐生成**: Mureka / Suno（首选）或 Python wave 生成占位音频（回退）
+- **音视频合成**: moviepy（首选）或 ffmpeg（回退）
 
-### Option A: Suno API (preferred)
+如果首选工具不可用，先向用户说明差异和局限，再使用替代方案。
 
-If `SUNO_API_KEY` is available, generate warm piano solo music via Suno:
-```bash
-python3 ${HERMES_SKILL_DIR}/scripts/generate_music.py --method suno \
-  --style "warm sentimental piano solo, graduation tribute, gentle melody" \
-  --duration 18 \
-  --output piano_accompaniment.mp3
-```
+---
 
-Then combine video + audio:
-```bash
-ffmpeg -i graduation_memory.mp4 -i piano_accompaniment.mp3 \
-  -c:v copy -c:a aac -shortest graduation_memory_final.mp4
-```
+## Lovart 成品参考分析
 
-### Option B: Python Wave Fallback
+基于 Theo 在 Lovart 上制作的成品视频的实际数据分析：
 
-If no Suno API key or ffmpeg audio encoding, generate simple piano melody using Python wave module:
-```bash
-python3 ${HERMES_SKILL_DIR}/scripts/generate_music.py --method wave \
-  --duration 18 \
-  --output piano_accompaniment.wav
-```
+- **成品参数**: 720×1280 @ 30fps, 18.1秒
+- **场景节奏**: 4段主场景（~5s→~6s→~6.6s），而非6段均匀3秒
+- **关键发现**: 变速节奏比均匀节奏更能传递情感
 
-Then combine with moviepy:
-```bash
-python3 ${HERMES_SKILL_DIR}/scripts/combine_video_audio.py \
-  --video graduation_memory.mp4 \
-  --audio piano_accompaniment.wav \
-  --output graduation_memory_final.mp4
-```
+此分析结果已融入脚本A的节奏策略中。
 
-### Music Guidelines
-- **Style**: Warm sentimental piano solo
-- **Volume**: 30-40% of total audio mix (music should support, not overpower)
-- **Ending**: Fade out synchronized with video fade-out (last 1.5-2s)
-- **Duration**: Match video length exactly (15-18s)
+---
 
-## Important Notes
+## Resources
 
-1. **Person consistency is the #1 challenge** — text-to-image tools produce different faces each time. Always copy-paste identical person descriptions across all 6 prompts.
-2. **Generation order matters** — complete all 6 images before starting any video generation.
-3. **Kling first-last frame mode** — the `reference_image_urls` parameter maps to Kling's end frame. If this doesn't work correctly with the FAL Kling provider, describe the end frame content in the prompt text and use `image_url` alone.
-4. **Variable pacing** — never use uniform durations. Follow the cinematic pacing strategy table.
-5. **Transition quality** — every prompt must explicitly demand smooth natural transitions: "NO stiff mechanical morphing, NO abrupt cuts".
-6. **Fallbacks** — if any tool (image_generate, video_generate) is unavailable, inform the user and suggest alternatives. The skill is designed with multiple fallback paths.
+### references/
+- `prompt_templates.md` — 脚本A和脚本B的完整 prompt 模板，包含详细描述、转场 prompt 和参数
 
-## Verification
-
-After completing all steps, verify:
-1. **6 images generated** — check each exists and person appearance is reasonably consistent
-2. **6 videos generated** — check transitions are smooth and not jarring
-3. **Final video assembled** — duration is 15-18s, resolution is 720×1280, transitions flow naturally
-4. **Music added** — piano solo is audible at 30-40% volume, fades out at end
-5. **Show result** — present the final video to the user for review, using `[[as_document]]` for high-quality delivery
-
-## Lovart成品 Reference
-
-Real production video analysis (Theo's Lovart成品):
-- Duration: 18.1s, Resolution: 720×1280, FPS: 30
-- 4 main scene segments (~5s → ~6s → ~6.6s), NOT uniform 6×3s
-- Scene transitions at t≈2.0s, t≈5.0-5.5s, t≈11.0-11.5s
-- Audio: piano accompaniment at 44100Hz
-- Key insight: variable-duration cinematic pacing produces superior emotional impact vs. uniform timing
+### scripts/ 和 assets/
+本技能不使用 scripts 或 assets 目录，所有创作依赖外部 AI 工具完成。
